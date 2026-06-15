@@ -16,15 +16,22 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 
 FONT_NAME = "FRSKorean"
 FALLBACK_FONT = "Helvetica"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def register_korean_font() -> str:
-    """맑은 고딕/나눔고딕을 찾아 reportlab에 등록하고 폰트명을 반환합니다."""
+    """번들/시스템 나눔고딕을 찾아 reportlab에 등록하고 폰트명을 반환합니다."""
     font_candidates = [
-        Path("C:/Windows/Fonts/malgun.ttf"),
-        Path("C:/Windows/Fonts/malgunbd.ttf"),
-        Path("C:/Windows/Fonts/NanumGothic.ttf"),
+        PROJECT_ROOT / "fonts" / "NanumGothic.ttf",
+        PROJECT_ROOT / "fonts" / "NanumGothic-Regular.ttf",
         Path("/usr/share/fonts/truetype/nanum/NanumGothic.ttf"),
+        Path("/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf"),
+        Path("/usr/share/fonts/truetype/nanum/NanumBarunGothic.ttf"),
+        Path("/usr/share/fonts/truetype/nanum/NanumGothicCoding.ttf"),
+        Path("/usr/share/fonts/truetype/nanumfont/NanumGothic.ttf"),
+        Path("/usr/share/fonts/truetype/nanumfont/NanumBarunGothic.ttf"),
+        Path("C:/Windows/Fonts/NanumGothic.ttf"),
+        Path("C:/Windows/Fonts/malgun.ttf"),
         Path("/Library/Fonts/NanumGothic.ttf"),
         Path.home() / "Library/Fonts/NanumGothic.ttf",
     ]
