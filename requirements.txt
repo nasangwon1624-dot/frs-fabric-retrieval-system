@@ -1,1 +1,15 @@
+streamlit
+google-genai
+python-dotenv
+Pillow
+sentence-transformers
+faiss-cpu
+numpy
+torch
+langchain
+langchain-core
+langgraph
+neo4j
 supabase
+pandas
+reportlab
