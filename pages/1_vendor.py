@@ -7,6 +7,7 @@ from utils.gemini_vision import analyze_fabric_image
 from utils.vectorstore import build_vectorstore
 from utils.knowledge_graph import build_knowledge_graph
 from utils.data_processor import get_quality_report
+from utils.supabase_client import load_all_fabrics, save_fabric, upload_image
 
 st.set_page_config(page_title="FRS - 벤더 포털", page_icon="🏭", layout="wide")
 
@@ -110,6 +111,51 @@ def save_db(data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+def load_fabrics():
+    try:
+        fabrics = load_all_fabrics()
+        return fabrics, "supabase", ""
+    except Exception as e:
+        return load_db(), "local", str(e)
+
+
+def save_fabric_remote(fabric):
+    try:
+        save_fabric(fabric)
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
+def upload_image_remote(file_bytes, filename):
+    try:
+        return upload_image(file_bytes, filename), ""
+    except Exception as e:
+        return "", str(e)
+
+
+def is_url(value):
+    return isinstance(value, str) and value.startswith(("http://", "https://"))
+
+
+def get_image_source(source_image):
+    if is_url(source_image):
+        return source_image
+    return f"data/images/{source_image}"
+
+
+def get_next_fabric_number(fabrics):
+    max_number = 0
+    for fabric in fabrics:
+        fabric_id = str(fabric.get("id", ""))
+        if fabric_id.startswith("FAB-"):
+            try:
+                max_number = max(max_number, int(fabric_id.split("-", 1)[1]))
+            except ValueError:
+                continue
+    return max_number + 1
+
+
 def get_category(fabric):
     cat = fabric.get("category", "")
     if isinstance(cat, list):
@@ -132,7 +178,7 @@ def format_top_stats(stats, limit=3):
 # ── 사이드바 ───────────────────────────────────────────
 with st.sidebar:
     st.markdown("### 📊 DB 현황")
-    db = load_db()
+    db, data_source, data_source_error = load_fabrics()
     valid = [f for f in db if f.get("name") != "분석 실패"]
     categories = set(get_category(f) for f in valid if f.get("category"))
 
@@ -150,6 +196,9 @@ with st.sidebar:
         <span class="stat-label">검색 인덱스</span>
     </div>
     """, unsafe_allow_html=True)
+    st.caption(f"데이터 소스: {'Supabase' if data_source == 'supabase' else 'Local JSON'}")
+    if data_source_error:
+        st.caption(f"Supabase fallback: {data_source_error}")
 
     st.markdown("### 🧹 데이터 품질 리포트")
     quality = get_quality_report(DB_PATH)
@@ -230,8 +279,9 @@ with tab1:
         st.markdown("---")
 
         if st.button("🤖 AI 분석 시작", type="primary", use_container_width=True):
+            existing_fabrics, _, _ = load_fabrics()
             db = load_db()
-            start_id = len(db) + 1
+            start_id = get_next_fabric_number(existing_fabrics or db)
             results = []
 
             progress = st.progress(0)
@@ -241,11 +291,12 @@ with tab1:
             for i, uploaded_file in enumerate(uploaded_files):
                 fabric_id = f"FAB-{str(start_id + i).zfill(3)}"
                 status.markdown(f"⏳ **[{i+1}/{total}]** 분석 중: `{uploaded_file.name}`")
+                file_bytes = uploaded_file.getvalue()
 
                 # 임시 저장 후 분석
                 tmp_path = f"data/tmp_{fabric_id}.jpg"
                 with open(tmp_path, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
+                    f.write(file_bytes)
 
                 result = analyze_fabric_image(tmp_path, fabric_id)
                 os.remove(tmp_path)
@@ -254,9 +305,16 @@ with tab1:
                 img_filename = f"{fabric_id}_{uploaded_file.name}"
                 img_save_path = f"data/images/{img_filename}"
                 with open(img_save_path, "wb") as f:
-                    uploaded_file.seek(0)
-                    f.write(uploaded_file.getbuffer())
-                result["source_image"] = img_filename
+                    f.write(file_bytes)
+
+                image_url, image_error = upload_image_remote(file_bytes, img_filename)
+                result["source_image"] = image_url or img_filename
+                if image_error:
+                    st.caption(f"Supabase 이미지 업로드 fallback: {img_filename} ({image_error})")
+
+                saved_remote, save_error = save_fabric_remote(result)
+                if not saved_remote:
+                    st.caption(f"Supabase 원단 저장 fallback: {fabric_id} ({save_error})")
 
                 results.append(result)
                 progress.progress((i + 1) / total)
@@ -286,9 +344,9 @@ with tab1:
                     if not is_fail:
                         col1, col2 = st.columns([1, 2])
                         with col1:
-                            img_path = f"data/images/{r.get('source_image', '')}"
-                            if os.path.exists(img_path):
-                                st.image(img_path, use_container_width=True)
+                            img_source = get_image_source(r.get('source_image', ''))
+                            if is_url(img_source) or os.path.exists(img_source):
+                                st.image(img_source, use_container_width=True)
                         with col2:
                             st.markdown(f"""
                             <div class="spec-row"><span class="spec-key">품번</span><span class="spec-val">{r.get('item_code', '-')}</span></div>
@@ -320,7 +378,7 @@ with tab1:
 
 # ── 탭2: 등록 현황 ────────────────────────────────────
 with tab2:
-    db = load_db()
+    db, data_source, data_source_error = load_fabrics()
     valid_db = [f for f in db if f.get("name") != "분석 실패"]
 
     if not valid_db:
@@ -346,6 +404,9 @@ with tab2:
             filtered = [f for f in filtered if get_category(f) == selected_cat]
 
         st.markdown(f"**{len(filtered)}개** 원단")
+        st.caption(f"데이터 소스: {'Supabase' if data_source == 'supabase' else 'Local JSON'}")
+        if data_source_error:
+            st.caption(f"Supabase fallback: {data_source_error}")
         st.markdown("---")
 
         for fabric in filtered:
@@ -356,9 +417,9 @@ with tab2:
             ):
                 col1, col2 = st.columns([1, 2])
                 with col1:
-                    img_path = f"data/images/{fabric.get('source_image', '')}"
-                    if os.path.exists(img_path):
-                        st.image(img_path, use_container_width=True)
+                    img_source = get_image_source(fabric.get('source_image', ''))
+                    if is_url(img_source) or os.path.exists(img_source):
+                        st.image(img_source, use_container_width=True)
                     else:
                         st.caption("이미지 없음")
                 with col2:

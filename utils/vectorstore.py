@@ -5,6 +5,11 @@ import numpy as np
 import pickle
 from sentence_transformers import SentenceTransformer
 
+try:
+    from utils.supabase_client import load_all_fabrics
+except Exception:
+    load_all_fabrics = None
+
 VECTORSTORE_PATH = "vectorstore/faiss_index"
 METADATA_PATH = "vectorstore/metadata.pkl"
 MODEL_NAME = "BAAI/bge-m3"
@@ -17,6 +22,39 @@ def get_embedder():
         print("BGE-M3 모델 로딩 중...")
         _embedder = SentenceTransformer(MODEL_NAME)
     return _embedder
+
+
+def _as_list(value) -> list:
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    return [str(value).strip()]
+
+
+def load_local_fabrics(fabric_db_path: str = "data/fabric_db.json") -> list:
+    if not os.path.exists(fabric_db_path):
+        return []
+    with open(fabric_db_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return data if isinstance(data, list) else []
+
+
+def load_fabrics_for_vectorstore(fabric_db_path: str = "data/fabric_db.json") -> tuple[list, str]:
+    """Supabase를 우선 사용하고 실패/빈 데이터면 로컬 JSON으로 fallback합니다."""
+    if load_all_fabrics is not None:
+        try:
+            fabrics = load_all_fabrics()
+            if fabrics:
+                print(f"Supabase 원단 로드: {len(fabrics)}개")
+                return fabrics, "supabase"
+            print("Supabase 원단 데이터가 비어 있어 로컬 JSON으로 fallback합니다.")
+        except Exception as e:
+            print(f"Supabase 원단 로드 실패, 로컬 JSON fallback: {e}")
+
+    fabrics = load_local_fabrics(fabric_db_path)
+    print(f"로컬 원단 로드: {len(fabrics)}개")
+    return fabrics, "local"
 
 
 def fabric_to_text(fabric: dict) -> str:
@@ -43,27 +81,26 @@ def fabric_to_text(fabric: dict) -> str:
 
     # 리스트 필드
     if fabric.get("characteristics"):
-        parts.append(f"특성: {', '.join(fabric['characteristics'])}")
+        parts.append(f"특성: {', '.join(_as_list(fabric['characteristics']))}")
     if fabric.get("suitable_for"):
-        parts.append(f"적합복종: {', '.join(fabric['suitable_for'])}")
+        parts.append(f"적합복종: {', '.join(_as_list(fabric['suitable_for']))}")
     if fabric.get("season"):
-        parts.append(f"시즌: {', '.join(fabric['season'])}")
+        parts.append(f"시즌: {', '.join(_as_list(fabric['season']))}")
     if fabric.get("color_options"):
-        parts.append(f"색상: {', '.join(fabric['color_options'])}")
+        parts.append(f"색상: {', '.join(_as_list(fabric['color_options']))}")
 
     return " | ".join(parts)
 
 
 def build_vectorstore(fabric_db_path: str = "data/fabric_db.json") -> int:
-    """fabric_db.json → BGE-M3 임베딩 → FAISS HNSW 인덱스 구축"""
+    """Supabase 우선 원단 데이터 → BGE-M3 임베딩 → FAISS HNSW 인덱스 구축"""
     os.makedirs("vectorstore", exist_ok=True)
 
-    with open(fabric_db_path, "r", encoding="utf-8") as f:
-        fabrics = json.load(f)
+    fabrics, source = load_fabrics_for_vectorstore(fabric_db_path)
 
     # 오류 항목 제외
     valid = [f for f in fabrics if f.get("name") != "분석 실패" and "error" not in f]
-    print(f"유효한 원단: {len(valid)}개")
+    print(f"유효한 원단: {len(valid)}개 ({source})")
 
     if not valid:
         return 0
@@ -103,8 +140,10 @@ def build_vectorstore(fabric_db_path: str = "data/fabric_db.json") -> int:
 
 def search(query: str, top_k: int = 5) -> list:
     """쿼리 → BGE-M3 임베딩 → HNSW 검색 → 유사 원단 반환"""
-    if not os.path.exists(VECTORSTORE_PATH):
-        raise FileNotFoundError("벡터스토어가 없습니다. build_vectorstore()를 먼저 실행하세요.")
+    if not os.path.exists(VECTORSTORE_PATH) or not os.path.exists(METADATA_PATH):
+        count = build_vectorstore()
+        if count == 0:
+            raise FileNotFoundError("검색 가능한 원단 데이터가 없습니다.")
 
     index = faiss.read_index(VECTORSTORE_PATH)
     with open(METADATA_PATH, "rb") as f:

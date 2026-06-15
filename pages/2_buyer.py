@@ -4,6 +4,7 @@ import json
 from PIL import Image
 from utils.rag_chain import query_rag, query_rag_with_image
 from utils.pdf_report import generate_buyer_report_pdf
+from utils.vectorstore import build_vectorstore
 
 st.set_page_config(page_title="FRS - 바이어 검색", page_icon="🔍", layout="wide")
 
@@ -132,6 +133,16 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 """, unsafe_allow_html=True)
 
 
+def is_url(value):
+    return isinstance(value, str) and value.startswith(("http://", "https://"))
+
+
+def get_image_source(source_image):
+    if is_url(source_image):
+        return source_image
+    return f"data/images/{source_image}"
+
+
 def _display_result(result: dict):
     """검색 결과 공통 출력"""
 
@@ -148,7 +159,7 @@ def _display_result(result: dict):
 
     for i, fabric in enumerate(result["retrieved_fabrics"], 1):
         score = fabric.get("similarity_score", 0)
-        score_pct = int(score * 100)
+        score_pct = int(max(0, min(100, float(score) * 100)))
 
         with st.expander(
             f"**{fabric.get('id', '?')}** &nbsp; "
@@ -158,9 +169,9 @@ def _display_result(result: dict):
             col1, col2 = st.columns([1, 2])
 
             with col1:
-                img_path = f"data/images/{fabric.get('source_image', '')}"
-                if os.path.exists(img_path):
-                    st.image(img_path, use_container_width=True)
+                img_source = get_image_source(fabric.get('source_image', ''))
+                if is_url(img_source) or os.path.exists(img_source):
+                    st.image(img_source, use_container_width=True)
                 else:
                     st.markdown("""
                     <div style="background:#111; border:1px solid #222; border-radius:8px;
@@ -237,16 +248,25 @@ with st.sidebar:
 
 # ── 벡터스토어 확인 ────────────────────────────────────
 if not os.path.exists("vectorstore/faiss_index"):
-    st.markdown("""
-    <div style="text-align:center; padding:80px; color:#444;">
-        <div style="font-size:48px; margin-bottom:16px;">⚠️</div>
-        <div style="font-size:18px; color:#666; margin-bottom:8px;">원단 DB가 비어있습니다</div>
-        <div style="font-size:13px;">벤더 포털에서 원단을 먼저 등록해주세요.</div>
-    </div>
-    """, unsafe_allow_html=True)
-    if st.button("벤더 포털로 이동 →", use_container_width=True):
-        st.switch_page("pages/1_vendor.py")
-    st.stop()
+    with st.spinner("Supabase 원단 데이터로 검색 인덱스를 구축 중입니다..."):
+        try:
+            indexed_count = build_vectorstore()
+        except Exception as e:
+            indexed_count = 0
+            st.warning(f"검색 인덱스 자동 구축 실패: {e}")
+
+    if indexed_count == 0:
+        st.markdown("""
+        <div style="text-align:center; padding:80px; color:#444;">
+            <div style="font-size:48px; margin-bottom:16px;">⚠️</div>
+            <div style="font-size:18px; color:#666; margin-bottom:8px;">원단 DB가 비어있습니다</div>
+            <div style="font-size:13px;">Supabase 또는 벤더 포털에서 원단을 먼저 등록해주세요.</div>
+        </div>
+        """, unsafe_allow_html=True)
+        if st.button("벤더 포털로 이동 →", use_container_width=True):
+            st.switch_page("pages/1_vendor.py")
+        st.stop()
+    st.success(f"검색 인덱스 자동 구축 완료: {indexed_count}개 원단")
 
 # ── 헤더 ───────────────────────────────────────────────
 st.markdown("""

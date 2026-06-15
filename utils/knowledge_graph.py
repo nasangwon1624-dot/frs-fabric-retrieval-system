@@ -14,10 +14,6 @@ except ImportError:  # pragma: no cover - handled at runtime for Streamlit clari
 load_dotenv()
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-NEO4J_URI = os.getenv("NEO4J_URI")
-NEO4J_USER = os.getenv("NEO4J_USER")
-NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD")
-
 DEFAULT_DB_PATH = "data/fabric_db.json"
 
 _driver = None
@@ -65,7 +61,11 @@ def _require_driver():
         raise ImportError(
             "neo4j 패키지가 설치되어 있지 않습니다. `pip install neo4j` 후 다시 실행하세요."
         )
-    if not all([NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD]):
+    if not all([
+        os.getenv("NEO4J_URI"),
+        os.getenv("NEO4J_USER"),
+        os.getenv("NEO4J_PASSWORD"),
+    ]):
         raise ValueError(
             "Neo4j 연결 환경변수 NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD를 설정하세요."
         )
@@ -77,8 +77,8 @@ def get_driver():
     _require_driver()
     if _driver is None:
         _driver = GraphDatabase.driver(
-            NEO4J_URI,
-            auth=(NEO4J_USER, NEO4J_PASSWORD),
+            os.getenv("NEO4J_URI"),
+            auth=(os.getenv("NEO4J_USER"), os.getenv("NEO4J_PASSWORD")),
         )
     return _driver
 
@@ -243,17 +243,30 @@ def build_knowledge_graph(
     rag_chain.py에서는 원단 등록 후 `build_knowledge_graph()`를 호출하면 됩니다.
     """
     fabrics = _load_fabrics(fabric_db_path)
+    return build_knowledge_graph_from_fabrics(fabrics, reset=reset)
+
+
+def build_knowledge_graph_from_fabrics(
+    fabrics: List[dict],
+    reset: bool = False,
+) -> int:
+    """메모리에 있는 원단 리스트를 Neo4j 그래프로 동기화합니다."""
+    valid_fabrics = [
+        fabric
+        for fabric in fabrics
+        if fabric.get("id") and fabric.get("name") != "분석 실패" and "error" not in fabric
+    ]
     driver = get_driver()
 
     with driver.session() as session:
         _execute_write(session, _create_constraints)
         if reset:
             _execute_write(session, _clear_frs_graph)
-        for fabric in fabrics:
+        for fabric in valid_fabrics:
             _execute_write(session, _merge_fabric, fabric)
         _execute_write(session, _merge_implication_rules)
 
-    return len(fabrics)
+    return len(valid_fabrics)
 
 
 def extract_graph_terms(query: str) -> Dict[str, List[str]]:

@@ -107,7 +107,8 @@ def _score_percent(fabric: Dict[str, Any]) -> str:
     if score is None:
         return "-"
     try:
-        return f"{float(score) * 100:.0f}%"
+        score_pct = max(0, min(100, float(score) * 100))
+        return f"{score_pct:.0f}%"
     except (TypeError, ValueError):
         return "-"
 

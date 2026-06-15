@@ -2,6 +2,11 @@ import streamlit as st
 import json
 import os
 
+try:
+    from utils.supabase_client import load_all_fabrics
+except Exception:
+    load_all_fabrics = None
+
 st.set_page_config(
     page_title="FRS — Fabric Retrieval System",
     page_icon="🧵",
@@ -125,13 +130,21 @@ def get_category(fabric):
 
 
 def get_stats():
-    db_path = "data/fabric_db.json"
-    if os.path.exists(db_path):
-        with open(db_path, "r", encoding="utf-8") as f:
-            db = json.load(f)
-        categories = set(get_category(f) for f in db if f.get("category"))
-        return len(db), len(categories)
-    return 0, 0
+    db = []
+    if load_all_fabrics is not None:
+        try:
+            db = load_all_fabrics()
+        except Exception:
+            db = []
+
+    if not db:
+        db_path = "data/fabric_db.json"
+        if os.path.exists(db_path):
+            with open(db_path, "r", encoding="utf-8") as f:
+                db = json.load(f)
+
+    categories = set(get_category(f) for f in db if f.get("category"))
+    return len(db), len(categories)
 
 fabric_count, category_count = get_stats()
 vs_ready = os.path.exists("vectorstore/faiss_index")
